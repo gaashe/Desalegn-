@@ -1,0 +1,52 @@
+/**
+ * Noto Sans Ethiopic Font Configuration
+ * Provides proper Amharic/Ge'ez script rendering.
+ *
+ * Option A: Google Fonts (recommended for quick setup)
+ * Add to <head> or @import in your CSS:
+ */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Ethiopic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+/**
+ * Option B: Self-hosted (for production performance)
+ * Download from: https://fonts.google.com/noto/specimen/Noto+Sans+Ethiopic
+ * Place in /public/fonts/ and uncomment below:
+ *
+ * @font-face {
+ *   font-family: 'Noto Sans Ethiopic';
+ *   src: url('/fonts/NotoSansEthiopic-Regular.woff2') format('woff2');
+ *   font-weight: 400;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ *
+ * @font-face {
+ *   font-family: 'Noto Sans Ethiopic';
+ *   src: url('/fonts/NotoSansEthiopic-Bold.woff2') format('woff2');
+ *   font-weight: 700;
+ *   font-style: normal;
+ *   font-display: swap;
+ * }
+ */
+
+:root {
+  --font-primary: 'Inter', 'Noto Sans Ethiopic', system-ui, sans-serif;
+  --font-ethiopic: 'Noto Sans Ethiopic', 'Nyala', sans-serif;
+}
+
+body {
+  font-family: var(--font-primary);
+}
+
+/* Apply Ethiopic font when Amharic is active */
+[lang="am"] body,
+body[data-lang="am"] {
+  font-family: var(--font-ethiopic);
+}
+
+/* Ensure Amharic text renders correctly in mixed content */
+.text-am,
+[lang="am"] {
+  font-family: var(--font-ethiopic);
+  line-height: 1.6; /* Amharic script needs more line height */
+}

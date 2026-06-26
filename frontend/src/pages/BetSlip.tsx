@@ -1,20 +1,12 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-
-interface Event {
-  id: string;
-  title: { en: string; am: string };
-  start_time: string;
-  status: "upcoming" | "live" | "completed";
-  odds: { home: number; draw: number; away: number };
-  teams: { home: { en: string; am: string }; away: { en: string; am: string } };
-}
+import type { ApiEvent } from "../App";
 
 interface BetSlipPageProps {
-  event: Event;
+  event: ApiEvent;
   locale: "en" | "am";
   balance: number;
-  onPlaceBet: (stake: number, odds: number, marketDesc: { en: string; am: string }) => void;
+  onPlaceBet: (stake: number, odds: number, selection: "home" | "draw" | "away", marketDesc: { en: string; am: string }) => void;
 }
 
 type Selection = "home" | "draw" | "away";
@@ -25,20 +17,19 @@ function BetSlipPage({ event, locale, balance, onPlaceBet }: BetSlipPageProps): 
   const [stake, setStake] = useState("");
 
   const stakeNum = parseFloat(stake) || 0;
-  const selectedOdds = selection ? event.odds[selection] : 0;
+  const selectedOdds = selection && event.odds ? event.odds[selection] : 0;
   const potentialWin = parseFloat((stakeNum * selectedOdds).toFixed(2));
 
   const getMarketDescription = (): { en: string; am: string } => {
     if (!selection) return { en: "", am: "" };
-    const teamMap: Record<Selection, { en: string; am: string }> = {
-      home: event.teams.home,
-      draw: { en: "Draw", am: "አቻ" },
-      away: event.teams.away,
+    const teamMap: Record<Selection, string> = {
+      home: event.home_team,
+      draw: locale === "am" ? "አቻ" : "Draw",
+      away: event.away_team,
     };
-    const team = teamMap[selection];
     return {
-      en: `Match Winner - ${team.en}`,
-      am: `የጨዋታ አሸናፊ - ${team.am}`,
+      en: `Match Winner - ${selection === "draw" ? "Draw" : (selection === "home" ? event.home_team : event.away_team)}`,
+      am: `የጨዋታ አሸናፊ - ${teamMap[selection]}`,
     };
   };
 
@@ -48,9 +39,9 @@ function BetSlipPage({ event, locale, balance, onPlaceBet }: BetSlipPageProps): 
     <div>
       <div className="section-header">{t("betting.placeBet")}</div>
       <div className="bet-slip">
-        <h3>{event.title[locale] || event.title.en}</h3>
+        <h3>{event.home_team} vs {event.away_team}</h3>
+        {event.league && <div style={{ fontSize: "0.8rem", color: "#999", marginBottom: "12px" }}>{event.league}</div>}
 
-        {/* Selection */}
         <div className="form-group">
           <label>{t("betting.matchWinner")}</label>
           <div className="odds-grid">
@@ -58,27 +49,26 @@ function BetSlipPage({ event, locale, balance, onPlaceBet }: BetSlipPageProps): 
               className={`odds-btn ${selection === "home" ? "selected" : ""}`}
               onClick={() => setSelection("home")}
             >
-              <div className="odds-label">{event.teams.home[locale] || event.teams.home.en}</div>
-              <div className="odds-value">{event.odds.home.toFixed(2)}</div>
+              <div className="odds-label">{event.home_team}</div>
+              <div className="odds-value">{event.odds?.home?.toFixed(2) || "-"}</div>
             </button>
             <button
               className={`odds-btn ${selection === "draw" ? "selected" : ""}`}
               onClick={() => setSelection("draw")}
             >
               <div className="odds-label">Draw / አቻ</div>
-              <div className="odds-value">{event.odds.draw.toFixed(2)}</div>
+              <div className="odds-value">{event.odds?.draw?.toFixed(2) || "-"}</div>
             </button>
             <button
               className={`odds-btn ${selection === "away" ? "selected" : ""}`}
               onClick={() => setSelection("away")}
             >
-              <div className="odds-label">{event.teams.away[locale] || event.teams.away.en}</div>
-              <div className="odds-value">{event.odds.away.toFixed(2)}</div>
+              <div className="odds-label">{event.away_team}</div>
+              <div className="odds-value">{event.odds?.away?.toFixed(2) || "-"}</div>
             </button>
           </div>
         </div>
 
-        {/* Stake */}
         <div className="form-group">
           <label>{t("betting.stake")}</label>
           <input
@@ -94,7 +84,6 @@ function BetSlipPage({ event, locale, balance, onPlaceBet }: BetSlipPageProps): 
           </div>
         </div>
 
-        {/* Potential Win */}
         {stakeNum > 0 && selection && (
           <div className="potential-win">
             <div style={{ fontSize: "0.8rem", color: "#666" }}>{t("betting.potentialWin")}</div>
@@ -107,20 +96,18 @@ function BetSlipPage({ event, locale, balance, onPlaceBet }: BetSlipPageProps): 
           </div>
         )}
 
-        {/* Insufficient balance warning */}
         {stakeNum > balance && (
           <div style={{ color: "var(--danger)", fontSize: "0.85rem", marginBottom: "12px", textAlign: "center" }}>
             {t("betting.insufficientBalance")}
           </div>
         )}
 
-        {/* Place Bet Button */}
         <button
           className="btn btn-primary"
           disabled={!canPlace}
           onClick={() => {
-            if (canPlace) {
-              onPlaceBet(stakeNum, selectedOdds, getMarketDescription());
+            if (canPlace && selection) {
+              onPlaceBet(stakeNum, selectedOdds, selection, getMarketDescription());
             }
           }}
         >

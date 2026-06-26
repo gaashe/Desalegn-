@@ -470,3 +470,18 @@ html[lang="am"] body {
   font-size: 1.1rem;
   font-weight: 700;
 }
+
+/* Login page */
+.login-page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 60px);
+  padding-bottom: 40px;
+}
+
+.error-text {
+  color: var(--danger);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+  text-align: center;
+}

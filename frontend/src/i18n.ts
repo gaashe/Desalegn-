@@ -39,6 +39,20 @@ const en = {
     success: "Success",
     failed: "Failed",
   },
+  auth: {
+    phone: "Phone Number",
+    sendOTP: "Send OTP",
+    enterOTP: "Enter OTP Code",
+    verify: "Verify",
+    loginDesc: "Login with your phone number to start betting",
+    otpSent: "OTP sent to",
+    changePhone: "Change number",
+    logout: "Logout",
+  },
+  events: {
+    refresh: "Refresh",
+    noEvents: "No events available",
+  },
   common: {
     etb: "ETB",
     login: "Login",
@@ -82,6 +96,20 @@ const am = {
     completed: "ተጠናቋል",
     success: "ተሳክቷል",
     failed: "አልተሳካም",
+  },
+  auth: {
+    phone: "ስልክ ቁጥር",
+    sendOTP: "OTP ላክ",
+    enterOTP: "የOTP ኮድ ያስገቡ",
+    verify: "አረጋግጥ",
+    loginDesc: "ውርርድ ለመጀመር በስልክ ቁጥርዎ ይግቡ",
+    otpSent: "OTP ተልኳል ወደ",
+    changePhone: "ቁጥር ለውጥ",
+    logout: "ውጣ",
+  },
+  events: {
+    refresh: "አድስ",
+    noEvents: "ክስተቶች የሉም",
   },
   common: {
     etb: "ብር",

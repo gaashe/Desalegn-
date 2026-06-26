@@ -33,6 +33,7 @@ const placeBetSchema = z.object({
     .positive("Stake must be positive")
     .max(100000, "Maximum stake is 100,000 ETB"),
   odds: z.number().gt(1.0, "Odds must be greater than 1.0"),
+  selection: z.enum(["home", "draw", "away"]).optional(),
 });
 
 type PlaceBetInput = z.infer<typeof placeBetSchema>;
@@ -45,7 +46,7 @@ router.post(
   "/place",
   validateBody(placeBetSchema),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const { user_id, event_id, market_description, stake, odds } =
+    const { user_id, event_id, market_description, stake, odds, selection } =
       req.body as PlaceBetInput;
 
     const client = await pool.connect();
@@ -121,10 +122,10 @@ router.post(
 
       // Step 4: Insert bet record
       const betResult = await client.query(
-        `INSERT INTO bets (user_id, event_id, market_description, stake, odds, status)
-         VALUES ($1, $2, $3, $4, $5, 'pending')
+        `INSERT INTO bets (user_id, event_id, market_description, stake, odds, status, selection)
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6)
          RETURNING id, stake, odds, potential_payout, status, created_at`,
-        [user_id, event_id, JSON.stringify(market_description), stake, odds]
+        [user_id, event_id, JSON.stringify(market_description), stake, odds, selection || null]
       );
 
       // Step 5: Commit transaction

@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import LoginPage from "./pages/Login";
 import EventsPage from "./pages/Events";
 import BetSlipPage from "./pages/BetSlip";
 import MyBetsPage from "./pages/MyBets";
@@ -7,74 +8,129 @@ import WalletPage from "./pages/Wallet";
 
 type Page = "events" | "betslip" | "mybets" | "wallet";
 
-interface Event {
+export interface ApiEvent {
   id: string;
-  title: { en: string; am: string };
+  title: string;
+  home_team: string;
+  away_team: string;
   start_time: string;
   status: "upcoming" | "live" | "completed";
   odds: { home: number; draw: number; away: number };
-  teams: { home: { en: string; am: string }; away: { en: string; am: string } };
+  league: string;
 }
 
 export interface Bet {
   id: string;
-  event_title: { en: string; am: string };
-  market_description: { en: string; am: string };
+  event_title: string;
+  home_team: string;
+  away_team: string;
+  market_description: string;
   stake: number;
   odds: number;
   potential_payout: number;
   status: "pending" | "won" | "lost" | "void";
+  selection: string;
+  event_result: string;
   created_at: string;
 }
 
-// Mock data for demo
-const MOCK_EVENTS: Event[] = [
-  {
-    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    title: { en: "Arsenal vs Chelsea", am: "አርሰናል vs ቼልሲ" },
-    start_time: new Date(Date.now() + 7200000).toISOString(),
-    status: "upcoming",
-    odds: { home: 2.1, draw: 3.4, away: 3.6 },
-    teams: { home: { en: "Arsenal", am: "አርሰናል" }, away: { en: "Chelsea", am: "ቼልሲ" } },
-  },
-  {
-    id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
-    title: { en: "Man City vs Liverpool", am: "ማን ሲቲ vs ሊቨርፑል" },
-    start_time: new Date(Date.now() + 3600000).toISOString(),
-    status: "live",
-    odds: { home: 1.85, draw: 3.6, away: 4.2 },
-    teams: { home: { en: "Man City", am: "ማን ሲቲ" }, away: { en: "Liverpool", am: "ሊቨርፑል" } },
-  },
-  {
-    id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
-    title: { en: "Barcelona vs Real Madrid", am: "ባርሴሎና vs ሪያል ማድሪድ" },
-    start_time: new Date(Date.now() + 86400000).toISOString(),
-    status: "upcoming",
-    odds: { home: 2.5, draw: 3.2, away: 2.8 },
-    teams: { home: { en: "Barcelona", am: "ባርሴሎና" }, away: { en: "Real Madrid", am: "ሪያል ማድሪድ" } },
-  },
-  {
-    id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
-    title: { en: "Ethiopia vs Kenya", am: "ኢትዮጵያ vs ኬንያ" },
-    start_time: new Date(Date.now() + 172800000).toISOString(),
-    status: "upcoming",
-    odds: { home: 1.95, draw: 3.3, away: 4.0 },
-    teams: { home: { en: "Ethiopia", am: "ኢትዮጵያ" }, away: { en: "Kenya", am: "ኬንያ" } },
-  },
-];
+const API_BASE = import.meta.env.VITE_API_URL || "";
 
 function App(): React.ReactElement {
   const { t, i18n } = useTranslation();
   const [page, setPage] = useState<Page>("events");
-  const [balance, setBalance] = useState(500.0);
-  const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [token, setToken] = useState<string | null>(localStorage.getItem("ethiobet_token"));
+  const [userId, setUserId] = useState<string | null>(localStorage.getItem("ethiobet_user_id"));
+  const [balance, setBalance] = useState(0);
+  const [events, setEvents] = useState<ApiEvent[]>([]);
   const [bets, setBets] = useState<Bet[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<ApiEvent | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const locale = (i18n.language || "en") as "en" | "am";
 
   const showToast = (message: string, type: "success" | "error" = "success"): void => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
   };
+
+  const authHeaders = (): HeadersInit =>
+    token ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` } : { "Content-Type": "application/json" };
+
+  const fetchEvents = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch(`${API_BASE}/api/events?lang=${locale}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEvents(data.events || []);
+      }
+    } catch {
+      console.error("Failed to fetch events");
+    }
+    setLoading(false);
+  }, [locale]);
+
+  const fetchBalance = useCallback(async (): Promise<void> => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/user/${userId}/balance`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setBalance(data.balance);
+      }
+    } catch {
+      console.error("Failed to fetch balance");
+    }
+  }, [userId, token]);
+
+  const fetchBets = useCallback(async (): Promise<void> => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/user/${userId}/bets?lang=${locale}`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setBets(data.bets || []);
+      }
+    } catch {
+      console.error("Failed to fetch bets");
+    }
+  }, [userId, token, locale]);
+
+  useEffect(() => {
+    fetchEvents();
+    if (token && userId) {
+      fetchBalance();
+      fetchBets();
+    } else {
+      setLoading(false);
+    }
+  }, [fetchEvents, fetchBalance, fetchBets, token, userId]);
+
+  const handleLogin = (newToken: string, user: { id: string; phone: string; balance: number }): void => {
+    setToken(newToken);
+    setUserId(user.id);
+    setBalance(user.balance);
+    localStorage.setItem("ethiobet_token", newToken);
+    localStorage.setItem("ethiobet_user_id", user.id);
+    showToast(t("common.welcome") + "!");
+  };
+
+  const handleLogout = (): void => {
+    if (token) {
+      fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders() }).catch(() => {});
+    }
+    setToken(null);
+    setUserId(null);
+    setBalance(0);
+    setBets([]);
+    localStorage.removeItem("ethiobet_token");
+    localStorage.removeItem("ethiobet_user_id");
+  };
+
+  if (!token) {
+    return <LoginPage onLogin={handleLogin} apiBase={API_BASE} />;
+  }
 
   const toggleLang = (): void => {
     const newLang = i18n.language === "am" ? "en" : "am";
@@ -82,37 +138,51 @@ function App(): React.ReactElement {
     document.documentElement.setAttribute("lang", newLang);
   };
 
-  const locale = (i18n.language || "en") as "en" | "am";
-
-  const handleSelectEvent = (event: Event): void => {
+  const handleSelectEvent = (event: ApiEvent): void => {
     setSelectedEvent(event);
     setPage("betslip");
   };
 
-  const handlePlaceBet = (stake: number, odds: number, marketDesc: { en: string; am: string }): void => {
-    if (stake > balance) {
-      showToast(t("betting.insufficientBalance"), "error");
-      return;
+  const handlePlaceBet = async (
+    stake: number,
+    odds: number,
+    selection: "home" | "draw" | "away",
+    marketDesc: { en: string; am: string }
+  ): Promise<void> => {
+    if (!selectedEvent || !userId) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/bets/place`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          user_id: userId,
+          event_id: selectedEvent.id,
+          market_description: marketDesc,
+          stake,
+          odds,
+          selection,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setBalance(data.remaining_balance);
+        showToast(t("betting.betPlaced"));
+        fetchBets();
+        setPage("mybets");
+      } else {
+        showToast(data.error || "Failed to place bet", "error");
+      }
+    } catch {
+      showToast("Network error", "error");
     }
-    setBalance((prev) => prev - stake);
-    const newBet: Bet = {
-      id: crypto.randomUUID(),
-      event_title: selectedEvent!.title,
-      market_description: marketDesc,
-      stake,
-      odds,
-      potential_payout: parseFloat((stake * odds).toFixed(2)),
-      status: "pending",
-      created_at: new Date().toISOString(),
-    };
-    setBets((prev) => [newBet, ...prev]);
-    showToast(t("betting.betPlaced"));
-    setPage("mybets");
   };
 
   const handleDeposit = (amount: number): void => {
     setBalance((prev) => prev + amount);
     showToast(t("wallet.success"));
+    fetchBalance();
   };
 
   return (
@@ -127,6 +197,14 @@ function App(): React.ReactElement {
           <button className="lang-btn" onClick={toggleLang}>
             {i18n.language === "am" ? "EN" : "አማ"}
           </button>
+          <button
+            className="lang-btn"
+            onClick={handleLogout}
+            title="Logout"
+            style={{ fontSize: "0.7rem", padding: "4px 8px" }}
+          >
+            {t("auth.logout")}
+          </button>
         </div>
       </header>
 
@@ -134,12 +212,20 @@ function App(): React.ReactElement {
       {toast && <div className={`toast ${toast.type === "error" ? "error" : ""}`}>{toast.message}</div>}
 
       {/* Pages */}
-      {page === "events" && <EventsPage events={MOCK_EVENTS} locale={locale} onSelect={handleSelectEvent} />}
-      {page === "betslip" && selectedEvent && (
-        <BetSlipPage event={selectedEvent} locale={locale} balance={balance} onPlaceBet={handlePlaceBet} />
+      {loading ? (
+        <div className="empty-state">
+          <p>{t("wallet.processing")}</p>
+        </div>
+      ) : (
+        <>
+          {page === "events" && <EventsPage events={events} locale={locale} onSelect={handleSelectEvent} onRefresh={fetchEvents} />}
+          {page === "betslip" && selectedEvent && (
+            <BetSlipPage event={selectedEvent} locale={locale} balance={balance} onPlaceBet={handlePlaceBet} />
+          )}
+          {page === "mybets" && <MyBetsPage bets={bets} locale={locale} onRefresh={fetchBets} />}
+          {page === "wallet" && <WalletPage balance={balance} onDeposit={handleDeposit} />}
+        </>
       )}
-      {page === "mybets" && <MyBetsPage bets={bets} locale={locale} />}
-      {page === "wallet" && <WalletPage balance={balance} onDeposit={handleDeposit} />}
 
       {/* Bottom Navigation */}
       <nav className="nav">
@@ -150,7 +236,7 @@ function App(): React.ReactElement {
           </svg>
           {t("nav.events")}
         </button>
-        <button className={`nav-item ${page === "mybets" ? "active" : ""}`} onClick={() => setPage("mybets")}>
+        <button className={`nav-item ${page === "mybets" ? "active" : ""}`} onClick={() => { setPage("mybets"); fetchBets(); }}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <path d="M14 2v6h6" />

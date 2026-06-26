@@ -5,9 +5,10 @@ import type { Bet } from "../App";
 interface MyBetsPageProps {
   bets: Bet[];
   locale: "en" | "am";
+  onRefresh: () => void;
 }
 
-function MyBetsPage({ bets, locale }: MyBetsPageProps): React.ReactElement {
+function MyBetsPage({ bets, locale, onRefresh }: MyBetsPageProps): React.ReactElement {
   const { t } = useTranslation();
 
   if (bets.length === 0) {
@@ -24,21 +25,30 @@ function MyBetsPage({ bets, locale }: MyBetsPageProps): React.ReactElement {
 
   return (
     <div>
-      <div className="section-header">{t("nav.myBets")}</div>
+      <div className="section-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>{t("nav.myBets")}</span>
+        <button onClick={onRefresh} style={{ background: "none", border: "none", color: "var(--primary)", cursor: "pointer", fontSize: "0.8rem" }}>
+          {t("events.refresh")}
+        </button>
+      </div>
       {bets.map((bet) => (
         <div key={bet.id} className="bet-item">
           <div className="bet-info">
-            <div className="bet-market">
-              {bet.market_description[locale] || bet.market_description.en}
-            </div>
+            <div className="bet-market">{bet.market_description}</div>
             <div className="bet-details">
-              {bet.event_title[locale] || bet.event_title.en} &bull;{" "}
+              {bet.home_team && bet.away_team ? `${bet.home_team} vs ${bet.away_team}` : bet.event_title}
+              {" "}&bull;{" "}
               {t("betting.stake")}: {bet.stake} {t("common.etb")} &bull;{" "}
               {t("betting.odds")}: {bet.odds.toFixed(2)}
             </div>
             <div className="bet-details" style={{ color: "var(--primary)" }}>
               {t("betting.potentialWin")}: {bet.potential_payout.toFixed(2)} {t("common.etb")}
             </div>
+            {bet.status === "won" && (
+              <div className="bet-details" style={{ color: "#22c55e", fontWeight: 600 }}>
+                Won {bet.potential_payout.toFixed(2)} {t("common.etb")}
+              </div>
+            )}
           </div>
           <span className={`bet-status ${bet.status}`}>{t(`status.${bet.status}`)}</span>
         </div>

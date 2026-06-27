@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import db from "@/lib/db";
+import { getDb, insertMessage, markMessageRead } from "@/lib/db";
 import { generateId } from "@/lib/utils";
 
 export async function GET(request: NextRequest) {
@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "userId required" }, { status: 400 });
   }
 
+  const db = await getDb();
   const messages = db.messages.filter(
     (m) => m.senderId === userId || m.receiverId === userId
   );
@@ -45,10 +46,23 @@ export async function POST(request: NextRequest) {
       createdAt: new Date().toISOString().split("T")[0],
     };
 
-    db.messages.push(message);
+    await insertMessage(message);
 
     return NextResponse.json(message, { status: 201 });
   } catch {
     return NextResponse.json({ error: "Failed to send message" }, { status: 500 });
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    if (!body.id) {
+      return NextResponse.json({ error: "id required" }, { status: 400 });
+    }
+    await markMessageRead(body.id);
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Failed to update message" }, { status: 500 });
   }
 }

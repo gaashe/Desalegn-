@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import bcryptjs from "bcryptjs";
-import db from "./db";
+import { getUserByEmail } from "./db";
 import type { Role, User } from "./db";
 
 const JWT_SECRET = process.env.JWT_SECRET || "bshewam-school-secret-key-2024";
@@ -28,15 +28,11 @@ export async function authenticateUser(
   email: string,
   password: string
 ): Promise<User | null> {
-  const user = db.users.find((u) => u.email === email);
+  const user = await getUserByEmail(email);
   if (!user) return null;
 
   const valid = await bcryptjs.compare(password, user.password);
   if (!valid) return null;
 
   return user;
-}
-
-export function getUserById(id: string): User | undefined {
-  return db.users.find((u) => u.id === id);
 }

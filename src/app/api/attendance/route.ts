@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import db from "@/lib/db";
+import { getDb, findAttendanceId, upsertAttendance, type Attendance } from "@/lib/db";
 import { generateId } from "@/lib/utils";
 
 export async function GET(request: NextRequest) {
@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
   const classId = request.nextUrl.searchParams.get("classId");
   const date = request.nextUrl.searchParams.get("date");
 
+  const db = await getDb();
   let records = db.attendance;
 
   if (studentId) records = records.filter((a) => a.studentId === studentId);
@@ -32,30 +33,32 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const records = body.records || [body];
+    const records: Array<{
+      studentId: string;
+      classId: string;
+      date: string;
+      status: string;
+      remarks?: string;
+    }> = body.records || [body];
 
-    const created = records.map((record: { studentId: string; classId: string; date: string; status: string; remarks?: string }) => {
-      const existing = db.attendance.findIndex(
-        (a) => a.studentId === record.studentId && a.classId === record.classId && a.date === record.date
+    const created: Attendance[] = [];
+    for (const record of records) {
+      const existingId = await findAttendanceId(
+        record.studentId,
+        record.classId,
+        record.date
       );
-
-      const entry = {
-        id: `a${generateId()}`,
+      const entry: Attendance = {
+        id: existingId || `a${generateId()}`,
         studentId: record.studentId,
         classId: record.classId,
         date: record.date,
-        status: record.status as "present" | "absent" | "late" | "excused",
+        status: record.status as Attendance["status"],
         remarks: record.remarks,
       };
-
-      if (existing >= 0) {
-        db.attendance[existing] = entry;
-      } else {
-        db.attendance.push(entry);
-      }
-
-      return entry;
-    });
+      await upsertAttendance(entry);
+      created.push(entry);
+    }
 
     return NextResponse.json(created, { status: 201 });
   } catch {

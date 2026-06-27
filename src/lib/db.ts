@@ -1,5 +1,9 @@
-// In-memory database for the school management system
-// In production, replace with PostgreSQL or another persistent database
+// Persistent database layer (PostgreSQL via node-postgres).
+// Works locally with a standard Postgres and in production with any
+// Postgres-compatible provider (e.g. Vercel Postgres / Neon) via DATABASE_URL.
+
+import { Pool } from "pg";
+import type { PoolClient, QueryResultRow } from "pg";
 
 export type Role = "admin" | "teacher" | "student" | "parent";
 
@@ -107,27 +111,461 @@ export interface Message {
   createdAt: string;
 }
 
-// Database storage
-const db = {
-  users: [] as User[],
-  students: [] as Student[],
-  teachers: [] as Teacher[],
-  classes: [] as ClassInfo[],
-  attendance: [] as Attendance[],
-  grades: [] as Grade[],
-  fees: [] as Fee[],
-  announcements: [] as Announcement[],
-  messages: [] as Message[],
-};
+export interface DbSnapshot {
+  users: User[];
+  students: Student[];
+  teachers: Teacher[];
+  classes: ClassInfo[];
+  attendance: Attendance[];
+  grades: Grade[];
+  fees: Fee[];
+  announcements: Announcement[];
+  messages: Message[];
+}
 
-// Seed data
-function seedDatabase() {
-  if (db.users.length > 0) return;
+// ---------------------------------------------------------------------------
+// Connection
+// ---------------------------------------------------------------------------
 
-  const bcryptjs = require("bcryptjs");
+const connectionString =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  "postgresql://bshewam:bshewam_dev_pw@127.0.0.1:5432/bshewam";
 
-  // Admin user
-  db.users.push({
+const isLocal =
+  connectionString.includes("localhost") ||
+  connectionString.includes("127.0.0.1");
+
+type GlobalWithPool = typeof globalThis & { __bshewamPool?: Pool };
+const globalForPool = globalThis as GlobalWithPool;
+
+const pool =
+  globalForPool.__bshewamPool ??
+  new Pool({
+    connectionString,
+    ssl: isLocal ? undefined : { rejectUnauthorized: false },
+    max: 5,
+  });
+
+globalForPool.__bshewamPool = pool;
+
+async function query<T extends QueryResultRow>(
+  text: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  const res = await pool.query<T>(text, params);
+  return res.rows;
+}
+
+// ---------------------------------------------------------------------------
+// Schema + seed
+// ---------------------------------------------------------------------------
+
+let readyPromise: Promise<void> | null = null;
+
+export function ensureReady(): Promise<void> {
+  if (!readyPromise) readyPromise = init();
+  return readyPromise;
+}
+
+async function init(): Promise<void> {
+  await createTables();
+  // Use a single dedicated connection so the advisory lock and the seed run on
+  // the same session (a pooled `query` could land on different connections).
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock($1)", [987654]);
+    const res = await client.query<{ n: number }>(
+      "SELECT COUNT(*)::int AS n FROM users"
+    );
+    if (res.rows[0].n === 0) await seed(client);
+    await client.query("SELECT pg_advisory_unlock($1)", [987654]);
+  } finally {
+    client.release();
+  }
+}
+
+async function createTables(): Promise<void> {
+  await query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id text PRIMARY KEY,
+      email text UNIQUE NOT NULL,
+      password text NOT NULL,
+      name text NOT NULL,
+      role text NOT NULL,
+      phone text,
+      avatar text,
+      created_at text NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS students (
+      id text PRIMARY KEY,
+      user_id text NOT NULL,
+      grade text NOT NULL,
+      section text NOT NULL,
+      roll_number text NOT NULL,
+      parent_id text,
+      date_of_birth text,
+      gender text,
+      address text,
+      enrollment_date text,
+      status text NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS teachers (
+      id text PRIMARY KEY,
+      user_id text NOT NULL,
+      subject text,
+      qualification text,
+      experience integer DEFAULT 0,
+      salary integer DEFAULT 0,
+      join_date text,
+      status text NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS classes (
+      id text PRIMARY KEY,
+      name text NOT NULL,
+      grade text,
+      section text,
+      teacher_id text,
+      subject text,
+      schedule text,
+      room text,
+      capacity integer DEFAULT 40
+    );
+    CREATE TABLE IF NOT EXISTS attendance (
+      id text PRIMARY KEY,
+      student_id text NOT NULL,
+      class_id text NOT NULL,
+      date text NOT NULL,
+      status text NOT NULL,
+      remarks text
+    );
+    CREATE TABLE IF NOT EXISTS grades (
+      id text PRIMARY KEY,
+      student_id text NOT NULL,
+      class_id text NOT NULL,
+      exam_type text,
+      score integer DEFAULT 0,
+      max_score integer DEFAULT 0,
+      grade text,
+      semester text,
+      date text,
+      remarks text
+    );
+    CREATE TABLE IF NOT EXISTS fees (
+      id text PRIMARY KEY,
+      student_id text NOT NULL,
+      type text,
+      amount integer DEFAULT 0,
+      due_date text,
+      paid_date text,
+      status text NOT NULL,
+      payment_method text,
+      transaction_id text
+    );
+    CREATE TABLE IF NOT EXISTS announcements (
+      id text PRIMARY KEY,
+      title text NOT NULL,
+      content text NOT NULL,
+      author_id text,
+      target_roles jsonb NOT NULL DEFAULT '[]'::jsonb,
+      target_grades jsonb,
+      priority text NOT NULL,
+      created_at text NOT NULL,
+      expires_at text
+    );
+    CREATE TABLE IF NOT EXISTS messages (
+      id text PRIMARY KEY,
+      sender_id text NOT NULL,
+      receiver_id text NOT NULL,
+      subject text,
+      content text,
+      read boolean NOT NULL DEFAULT false,
+      created_at text NOT NULL
+    );
+  `);
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot reads (returns the full data set in the legacy in-memory shape)
+// ---------------------------------------------------------------------------
+
+export async function getDb(): Promise<DbSnapshot> {
+  await ensureReady();
+  const [
+    users,
+    students,
+    teachers,
+    classes,
+    attendance,
+    grades,
+    fees,
+    announcements,
+    messages,
+  ] = await Promise.all([
+    query<User>(
+      `SELECT id, email, password, name, role, phone, avatar, created_at AS "createdAt" FROM users`
+    ),
+    query<Student>(
+      `SELECT id, user_id AS "userId", grade, section, roll_number AS "rollNumber",
+              parent_id AS "parentId", date_of_birth AS "dateOfBirth", gender, address,
+              enrollment_date AS "enrollmentDate", status FROM students`
+    ),
+    query<Teacher>(
+      `SELECT id, user_id AS "userId", subject, qualification, experience, salary,
+              join_date AS "joinDate", status FROM teachers`
+    ),
+    query<ClassInfo>(
+      `SELECT id, name, grade, section, teacher_id AS "teacherId", subject, schedule,
+              room, capacity FROM classes`
+    ),
+    query<Attendance>(
+      `SELECT id, student_id AS "studentId", class_id AS "classId", date, status, remarks
+              FROM attendance`
+    ),
+    query<Grade>(
+      `SELECT id, student_id AS "studentId", class_id AS "classId", exam_type AS "examType",
+              score, max_score AS "maxScore", grade, semester, date, remarks FROM grades`
+    ),
+    query<Fee>(
+      `SELECT id, student_id AS "studentId", type, amount, due_date AS "dueDate",
+              paid_date AS "paidDate", status, payment_method AS "paymentMethod",
+              transaction_id AS "transactionId" FROM fees`
+    ),
+    query<Announcement>(
+      `SELECT id, title, content, author_id AS "authorId", target_roles AS "targetRoles",
+              target_grades AS "targetGrades", priority, created_at AS "createdAt",
+              expires_at AS "expiresAt" FROM announcements`
+    ),
+    query<Message>(
+      `SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", subject, content,
+              read, created_at AS "createdAt" FROM messages`
+    ),
+  ]);
+
+  return {
+    users,
+    students,
+    teachers,
+    classes,
+    attendance,
+    grades,
+    fees,
+    announcements,
+    messages,
+  };
+}
+
+export async function getUserByEmail(email: string): Promise<User | null> {
+  await ensureReady();
+  const rows = await query<User>(
+    `SELECT id, email, password, name, role, phone, avatar, created_at AS "createdAt"
+       FROM users WHERE email = $1`,
+    [email]
+  );
+  return rows[0] ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Generic write helpers
+// ---------------------------------------------------------------------------
+
+function toSnake(key: string): string {
+  return key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+}
+
+const JSONB_COLUMNS = new Set(["target_roles", "target_grades"]);
+
+function encode(column: string, value: unknown): unknown {
+  if (JSONB_COLUMNS.has(column)) return JSON.stringify(value ?? null);
+  return value ?? null;
+}
+
+async function insertRow(
+  table: string,
+  obj: Record<string, unknown>
+): Promise<void> {
+  const keys = Object.keys(obj);
+  const cols = keys.map(toSnake);
+  const placeholders = cols.map(
+    (c, i) => (JSONB_COLUMNS.has(c) ? `$${i + 1}::jsonb` : `$${i + 1}`)
+  );
+  const values = cols.map((c, i) => encode(c, obj[keys[i]]));
+  await ensureReady();
+  await query(
+    `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${placeholders.join(", ")})`,
+    values
+  );
+}
+
+async function updateRow(
+  table: string,
+  id: string,
+  obj: Record<string, unknown>
+): Promise<void> {
+  const keys = Object.keys(obj).filter((k) => k !== "id");
+  if (keys.length === 0) return;
+  const sets = keys.map((k, i) => {
+    const col = toSnake(k);
+    return JSONB_COLUMNS.has(col)
+      ? `${col} = $${i + 1}::jsonb`
+      : `${col} = $${i + 1}`;
+  });
+  const values = keys.map((k) => encode(toSnake(k), obj[k]));
+  values.push(id);
+  await ensureReady();
+  await query(
+    `UPDATE ${table} SET ${sets.join(", ")} WHERE id = $${keys.length + 1}`,
+    values
+  );
+}
+
+async function deleteRow(table: string, id: string): Promise<void> {
+  await ensureReady();
+  await query(`DELETE FROM ${table} WHERE id = $1`, [id]);
+}
+
+// Entity-specific helpers ----------------------------------------------------
+
+export const insertUser = (u: User) => insertRow("users", { ...u });
+export const updateUser = (id: string, fields: Partial<User>) =>
+  updateRow("users", id, { ...fields });
+
+export const insertStudent = (s: Student) => insertRow("students", { ...s });
+export const updateStudent = (id: string, fields: Partial<Student>) =>
+  updateRow("students", id, { ...fields });
+export const deleteStudent = (id: string) => deleteRow("students", id);
+
+export const insertTeacher = (t: Teacher) => insertRow("teachers", { ...t });
+export const updateTeacher = (id: string, fields: Partial<Teacher>) =>
+  updateRow("teachers", id, { ...fields });
+export const deleteTeacher = (id: string) => deleteRow("teachers", id);
+
+export const insertClass = (c: ClassInfo) => insertRow("classes", { ...c });
+export const updateClass = (id: string, fields: Partial<ClassInfo>) =>
+  updateRow("classes", id, { ...fields });
+export const deleteClass = (id: string) => deleteRow("classes", id);
+
+export const insertGrade = (g: Grade) => insertRow("grades", { ...g });
+export const updateGrade = (id: string, fields: Partial<Grade>) =>
+  updateRow("grades", id, { ...fields });
+export const deleteGrade = (id: string) => deleteRow("grades", id);
+
+export const insertFee = (f: Fee) => insertRow("fees", { ...f });
+export const updateFee = (id: string, fields: Partial<Fee>) =>
+  updateRow("fees", id, { ...fields });
+export const deleteFee = (id: string) => deleteRow("fees", id);
+
+export const insertAnnouncement = (a: Announcement) =>
+  insertRow("announcements", { ...a });
+export const deleteAnnouncement = (id: string) =>
+  deleteRow("announcements", id);
+
+export const insertMessage = (m: Message) => insertRow("messages", { ...m });
+export const markMessageRead = (id: string) =>
+  updateRow("messages", id, { read: true });
+
+export async function deleteUser(id: string): Promise<void> {
+  await deleteRow("users", id);
+}
+
+export async function upsertAttendance(entry: Attendance): Promise<void> {
+  await ensureReady();
+  await query(
+    `INSERT INTO attendance (id, student_id, class_id, date, status, remarks)
+       VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE
+       SET status = EXCLUDED.status, remarks = EXCLUDED.remarks`,
+    [
+      entry.id,
+      entry.studentId,
+      entry.classId,
+      entry.date,
+      entry.status,
+      entry.remarks ?? null,
+    ]
+  );
+}
+
+export async function findAttendanceId(
+  studentId: string,
+  classId: string,
+  date: string
+): Promise<string | null> {
+  await ensureReady();
+  const rows = await query<{ id: string }>(
+    `SELECT id FROM attendance WHERE student_id = $1 AND class_id = $2 AND date = $3 LIMIT 1`,
+    [studentId, classId, date]
+  );
+  return rows[0]?.id ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Seed (demo data) — idempotent via fixed primary keys
+// ---------------------------------------------------------------------------
+
+async function seed(client: PoolClient): Promise<void> {
+  const bcryptjs = await import("bcryptjs");
+  const data = buildSeedData(bcryptjs.default ?? bcryptjs);
+
+  await client.query("BEGIN");
+  try {
+    await bulkInsert(client, "users", data.users);
+    await bulkInsert(client, "teachers", data.teachers);
+    await bulkInsert(client, "students", data.students);
+    await bulkInsert(client, "classes", data.classes);
+    await bulkInsert(client, "attendance", data.attendance);
+    await bulkInsert(client, "grades", data.grades);
+    await bulkInsert(client, "fees", data.fees);
+    await bulkInsert(client, "announcements", data.announcements);
+    await bulkInsert(client, "messages", data.messages);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  }
+}
+
+// Inserts many rows in a single multi-row INSERT statement.
+async function bulkInsert<T extends object>(
+  client: PoolClient,
+  table: string,
+  rows: T[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  const keys = Object.keys(rows[0]);
+  const cols = keys.map(toSnake);
+  const values: unknown[] = [];
+  const tuples = rows.map((row, r) => {
+    const obj = row as Record<string, unknown>;
+    const placeholders = cols.map((c, i) => {
+      const idx = r * cols.length + i + 1;
+      return JSONB_COLUMNS.has(c) ? `$${idx}::jsonb` : `$${idx}`;
+    });
+    keys.forEach((k, i) => values.push(encode(cols[i], obj[k])));
+    return `(${placeholders.join(", ")})`;
+  });
+  await client.query(
+    `INSERT INTO ${table} (${cols.join(", ")}) VALUES ${tuples.join(", ")}`,
+    values
+  );
+}
+
+interface Hasher {
+  hashSync(s: string, rounds: number): string;
+}
+
+function buildSeedData(bcryptjs: Hasher): DbSnapshot {
+  const users: User[] = [];
+  const students: Student[] = [];
+  const teachers: Teacher[] = [];
+  const classes: ClassInfo[] = [];
+  const attendance: Attendance[] = [];
+  const grades: Grade[] = [];
+  const fees: Fee[] = [];
+  const announcements: Announcement[] = [];
+  const messages: Message[] = [];
+
+  users.push({
     id: "u1",
     email: "admin@bshewam.edu.et",
     password: bcryptjs.hashSync("admin123", 10),
@@ -137,8 +575,7 @@ function seedDatabase() {
     createdAt: "2024-01-01",
   });
 
-  // Teachers
-  const teachers = [
+  const teacherData = [
     { name: "W/ro Tigist Haile", subject: "Mathematics", email: "tigist@bshewam.edu.et" },
     { name: "Ato Dawit Mekonnen", subject: "English", email: "dawit@bshewam.edu.et" },
     { name: "W/ro Hiwot Bekele", subject: "Science", email: "hiwot@bshewam.edu.et" },
@@ -146,9 +583,9 @@ function seedDatabase() {
     { name: "W/ro Meron Tadesse", subject: "Amharic", email: "meron@bshewam.edu.et" },
   ];
 
-  teachers.forEach((t, i) => {
+  teacherData.forEach((t, i) => {
     const uid = `u${10 + i}`;
-    db.users.push({
+    users.push({
       id: uid,
       email: t.email,
       password: bcryptjs.hashSync("teacher123", 10),
@@ -157,7 +594,7 @@ function seedDatabase() {
       phone: `+25191${1000000 + i}`,
       createdAt: "2024-01-15",
     });
-    db.teachers.push({
+    teachers.push({
       id: `t${i + 1}`,
       userId: uid,
       subject: t.subject,
@@ -169,7 +606,6 @@ function seedDatabase() {
     });
   });
 
-  // Parents
   const parents = [
     { name: "Ato Abebe Worku", email: "abebe@gmail.com" },
     { name: "W/ro Almaz Tesfaye", email: "almaz@gmail.com" },
@@ -179,7 +615,7 @@ function seedDatabase() {
   ];
 
   parents.forEach((p, i) => {
-    db.users.push({
+    users.push({
       id: `u${20 + i}`,
       email: p.email,
       password: bcryptjs.hashSync("parent123", 10),
@@ -190,7 +626,6 @@ function seedDatabase() {
     });
   });
 
-  // Students
   const studentNames = [
     { name: "Abiy Abebe", gender: "Male", grade: "9", section: "A", parent: "u20" },
     { name: "Sara Almaz", gender: "Female", grade: "9", section: "A", parent: "u21" },
@@ -206,7 +641,7 @@ function seedDatabase() {
 
   studentNames.forEach((s, i) => {
     const uid = `u${30 + i}`;
-    db.users.push({
+    users.push({
       id: uid,
       email: `${s.name.split(" ")[0].toLowerCase()}@student.bshewam.edu.et`,
       password: bcryptjs.hashSync("student123", 10),
@@ -214,7 +649,7 @@ function seedDatabase() {
       role: "student",
       createdAt: "2024-02-15",
     });
-    db.students.push({
+    students.push({
       id: `s${i + 1}`,
       userId: uid,
       grade: s.grade,
@@ -229,7 +664,6 @@ function seedDatabase() {
     });
   });
 
-  // Classes
   const classData = [
     { grade: "9", section: "A", subject: "Mathematics", teacher: "t1", room: "R101" },
     { grade: "9", section: "A", subject: "English", teacher: "t2", room: "R102" },
@@ -244,7 +678,7 @@ function seedDatabase() {
   ];
 
   classData.forEach((c, i) => {
-    db.classes.push({
+    classes.push({
       id: `c${i + 1}`,
       name: `Grade ${c.grade}${c.section} - ${c.subject}`,
       grade: c.grade,
@@ -257,7 +691,6 @@ function seedDatabase() {
     });
   });
 
-  // Attendance records
   const today = new Date();
   for (let d = 0; d < 30; d++) {
     const date = new Date(today);
@@ -265,15 +698,15 @@ function seedDatabase() {
     if (date.getDay() === 0 || date.getDay() === 6) continue;
     const dateStr = date.toISOString().split("T")[0];
 
-    db.students.forEach((student) => {
-      const relevantClasses = db.classes.filter(
+    students.forEach((student) => {
+      const relevantClasses = classes.filter(
         (c) => c.grade === student.grade && c.section === student.section
       );
       relevantClasses.forEach((cls) => {
         const rand = Math.random();
         const status = rand > 0.9 ? "absent" : rand > 0.85 ? "late" : "present";
-        db.attendance.push({
-          id: `a${db.attendance.length + 1}`,
+        attendance.push({
+          id: `a${attendance.length + 1}`,
           studentId: student.id,
           classId: cls.id,
           date: dateStr,
@@ -283,10 +716,9 @@ function seedDatabase() {
     });
   }
 
-  // Grades
   const examTypes = ["Quiz 1", "Midterm", "Quiz 2", "Final"];
-  db.students.forEach((student) => {
-    const relevantClasses = db.classes.filter(
+  students.forEach((student) => {
+    const relevantClasses = classes.filter(
       (c) => c.grade === student.grade && c.section === student.section
     );
     relevantClasses.forEach((cls) => {
@@ -300,8 +732,8 @@ function seedDatabase() {
         else if (pct >= 0.7) letterGrade = "C";
         else if (pct >= 0.6) letterGrade = "D";
 
-        db.grades.push({
-          id: `g${db.grades.length + 1}`,
+        grades.push({
+          id: `g${grades.length + 1}`,
           studentId: student.id,
           classId: cls.id,
           examType: exam,
@@ -316,7 +748,6 @@ function seedDatabase() {
     });
   });
 
-  // Fees
   const feeTypes = [
     { type: "Tuition", amount: 5000 },
     { type: "Registration", amount: 500 },
@@ -325,11 +756,11 @@ function seedDatabase() {
     { type: "Transport", amount: 1500 },
   ];
 
-  db.students.forEach((student) => {
+  students.forEach((student) => {
     feeTypes.forEach((fee, fi) => {
       const isPaid = Math.random() > 0.3;
-      db.fees.push({
-        id: `f${db.fees.length + 1}`,
+      fees.push({
+        id: `f${fees.length + 1}`,
         studentId: student.id,
         type: fee.type,
         amount: fee.amount,
@@ -341,8 +772,7 @@ function seedDatabase() {
     });
   });
 
-  // Announcements
-  db.announcements.push(
+  announcements.push(
     {
       id: "ann1",
       title: "Welcome to Bshewam School 2024/2025",
@@ -390,8 +820,7 @@ function seedDatabase() {
     }
   );
 
-  // Messages
-  db.messages.push(
+  messages.push(
     {
       id: "m1",
       senderId: "u10",
@@ -420,8 +849,16 @@ function seedDatabase() {
       createdAt: "2024-10-22",
     }
   );
+
+  return {
+    users,
+    students,
+    teachers,
+    classes,
+    attendance,
+    grades,
+    fees,
+    announcements,
+    messages,
+  };
 }
-
-seedDatabase();
-
-export default db;

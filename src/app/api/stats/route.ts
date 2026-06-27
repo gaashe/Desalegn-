@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import db from "@/lib/db";
+import { getDb } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const db = await getDb();
   const totalStudents = db.students.filter((s) => s.status === "active").length;
   const totalTeachers = db.teachers.filter((t) => t.status === "active").length;
   const totalClasses = db.classes.length;

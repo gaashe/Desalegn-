@@ -3,8 +3,8 @@ export const siteConfig = {
   tagline: "Crafting Digital Experiences That Inspire",
   description:
     "Professional web development services — custom websites, applications, and tutoring platforms built with modern technologies.",
-  email: "contact@zodaic.com",
-  phone: "+251-XXX-XXXXXX",
+  email: "hagirsbun@gmail.com",
+  phone: "+251933220175",
   location: "Addis Ababa, Ethiopia",
   social: {
     github: "https://github.com/gaashe",

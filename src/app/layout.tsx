@@ -1,4 +1,3 @@
-
 import type { Metadata } from "next";  
 import "./globals.css";  
 import Navbar from "@/components/Navbar";  
@@ -55,15 +54,13 @@ export default function RootLayout({
 }>) {  
   return (  
     <html lang="en">  
-      <head>  
+      <body>  
         <Script  
           async  
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2489819512124255"  
           crossOrigin="anonymous"  
-          strategy="afterInteractive"  
+          strategy="beforeInteractive"  
         />  
-      </head>  
-      <body>  
         <Navbar />  
         <main className="min-h-screen pt-16">{children}</main>  
         <Footer />  
